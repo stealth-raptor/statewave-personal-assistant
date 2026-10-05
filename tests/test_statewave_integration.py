@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import openai
 import pytest
 import statewave as sw
 from starlette.responses import JSONResponse
@@ -144,3 +145,21 @@ async def test_middleware_skips_recording_when_memory_message_is_missing(
 
     assert returned is response
     assert recorded == []
+
+
+def test_openai_client_api_key_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    def build_client(llm_key: str | None, openai_key: str | None) -> Any:
+        monkeypatch.setattr(statewave_integration, "_openai", None)  # reset cached client
+        for name, value in (("LLM_API_KEY", llm_key), ("OPENAI_API_KEY", openai_key)):
+            if value is None:
+                monkeypatch.delenv(name, raising=False)
+            else:
+                monkeypatch.setenv(name, value)
+        return statewave_integration._openai_client()
+
+    assert build_client("llm-key", "openai-key").api_key == "llm-key"  # LLM_API_KEY wins
+    assert build_client("llm-key", None).api_key == "llm-key"  # LLM_API_KEY alone works
+    assert build_client(None, "openai-key").api_key == "openai-key"  # falls back to OPENAI_API_KEY
+
+    with pytest.raises(openai.OpenAIError):  # neither set
+        build_client(None, None)
